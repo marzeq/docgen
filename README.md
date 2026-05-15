@@ -151,3 +151,7 @@ int add(int x, int y) {
 * or replace language servers.
 
 It is designed to be a lightweight extraction layer.
+
+# JSON usage
+
+To generate HTML docs, it should be trivial to employ a clanker to walk the JSON and render.
