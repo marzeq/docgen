@@ -351,6 +351,7 @@ doc_comment_arr parse_doc_comments(const char* file_name, bool* okay) {
 
   str_view expected_comment_prefix;
   usz line_number = 0;
+  bool parsed_header = false;
 
 #define DOC_COMMENT_INIT ((doc_comment){ \
     .desc = { .alloc = a },              \
@@ -394,6 +395,7 @@ doc_comment_arr parse_doc_comments(const char* file_name, bool* okay) {
       } break;
       case PARSER_STATE_PARSING: {
         if (!str_view_starts_with(line, expected_comment_prefix)) {
+          parsed_header = true;
           if (current_comment.header.count != 0) {
             str_builder_append(&current_comment.header, "\n");
           }
@@ -405,6 +407,30 @@ doc_comment_arr parse_doc_comments(const char* file_name, bool* okay) {
         line = str_view_trim(line);
         
         if (line.count == 0) continue;
+
+        if (line.count >= 2 && line.data[0] == FIELD_PREFIX && line.data[1] == DOC_END) {
+          if (line.count != 2) {
+            fprintf(stderr, "Error: Unexpected text after %c in file " svpfmt " line %lu\n", DOC_END, svpfarg(str_view_from_cstr(file_name)), line_number);
+            *okay = false;
+            return (doc_comment_arr){0};
+          }
+          if (current_comment.name.count == 0) {
+            fprintf(stderr, "Error: Doc comment missing @name field in file " svpfmt " line %lu\n", svpfarg(str_view_from_cstr(file_name)), line_number);
+            *okay = false;
+            return (doc_comment_arr){0};
+          }
+          da_push(&comments, current_comment);
+          current_comment = DOC_COMMENT_INIT;
+          parser_state = PARSER_STATE_IGNORING;
+          parsed_header = false;
+          continue;
+        }
+
+        if (parsed_header) {
+          fprintf(stderr, "Error: Doc comment fields must come before the header. Error in file " svpfmt " line %lu\n", svpfarg(str_view_from_cstr(file_name)), line_number);
+          *okay = false;
+          return (doc_comment_arr){0};
+        }
 
         if (line.data[0] != FIELD_PREFIX) {
           switch (current_field) {
@@ -534,23 +560,6 @@ doc_comment_arr parse_doc_comments(const char* file_name, bool* okay) {
 
         str_view_chop_left(&line, 1);
 
-        if (line.data[0] == DOC_END) {
-          if (line.count != 1) {
-            fprintf(stderr, "Error: Unexpected text after %c in file " svpfmt " line %lu\n", DOC_END, svpfarg(str_view_from_cstr(file_name)), line_number);
-            *okay = false;
-            return (doc_comment_arr){0};
-          }
-          if (current_comment.name.count == 0) {
-            fprintf(stderr, "Error: Doc comment missing @name field in file " svpfmt " line %lu\n", svpfarg(str_view_from_cstr(file_name)), line_number);
-            *okay = false;
-            return (doc_comment_arr){0};
-          }
-          da_push(&comments, current_comment);
-          current_comment = DOC_COMMENT_INIT;
-          parser_state = PARSER_STATE_IGNORING;
-          continue;
-        }
-
         str_view field_name = str_view_chop_while(&line, isnotspace);
         if (field_name.count == 0) {
           fprintf(stderr, "Error: Expected field name after '%c' in file " svpfmt " line %lu\n", FIELD_PREFIX, svpfarg(str_view_from_cstr(file_name)), line_number);
@@ -666,6 +675,12 @@ doc_comment_arr parse_doc_comments(const char* file_name, bool* okay) {
       } break;
       default: assert(false && "Unreachable");
     }
+  }
+
+  if (parser_state != PARSER_STATE_IGNORING) {
+    fprintf(stderr, "Error: Unterminated doc comment in file " svpfmt " starting at line %lu\n", svpfarg(str_view_from_cstr(file_name)), current_comment.location.line);
+    *okay = false;
+    return (doc_comment_arr){0};
   }
 
   *okay = true;
